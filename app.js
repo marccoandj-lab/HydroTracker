@@ -44,7 +44,8 @@ class WaterTracker {
             enabled: false,
             interval: CONFIG.DEFAULT_REMINDER_INTERVAL,
             lastReminder: null,
-            fcmToken: null
+            fcmToken: null,
+            userGrantedPermission: false // Track if user granted permission
         };
         this.messaging = null;
 
@@ -636,7 +637,7 @@ class WaterTracker {
     // Initialize FCM Token
     async initializeFCM() {
         if (!this.messaging) {
-            console.log('FCM not available - using browser notifications only');
+            this.log('FCM not available - using browser notifications only');
             return false;
         }
 
@@ -644,7 +645,7 @@ class WaterTracker {
             // Request permission first
             const permission = await Notification.requestPermission();
             if (permission !== 'granted') {
-                console.log('Notification permission not granted for FCM');
+                this.log('Notification permission not granted for FCM');
                 return false;
             }
 
@@ -652,15 +653,16 @@ class WaterTracker {
             const token = await this.messaging.getToken({
                 vapidKey: 'BEl62iUYgUivxIkv69yViEuiBIa-Ib9-SkvMeAtA3LFgDzkrxZJjSgSnfckjBJuBkr3qBUYIHBQFLXYp5Nksh8U'
             });
-
+            
             if (token) {
                 this.reminderSettings.fcmToken = token;
+                this.reminderSettings.userGrantedPermission = true;
                 this.saveReminderSettings();
-                console.log('FCM Token obtained:', token.substring(0, 20) + '...');
+                this.log('FCM Token obtained:', token.substring(0, 20) + '...');
                 return true;
             }
         } catch (error) {
-            console.error('FCM initialization error:', error);
+            this.log('FCM initialization error:', error);
         }
         return false;
     }
@@ -675,14 +677,18 @@ class WaterTracker {
         try {
             const permission = await Notification.requestPermission();
             if (permission === 'granted') {
-                console.log('Notification permission granted');
+                this.log('Notification permission granted');
+                this.reminderSettings.userGrantedPermission = true;
+                this.saveReminderSettings();
                 return true;
             } else {
                 this.showToast('Permission Denied', 'Please enable notifications in your browser settings', 'error');
+                this.reminderSettings.userGrantedPermission = false;
+                this.saveReminderSettings();
                 return false;
             }
         } catch (error) {
-            console.error('Notification permission error:', error);
+            this.log('Notification permission error:', error);
             return false;
         }
     }
@@ -727,11 +733,11 @@ class WaterTracker {
         if (saved) {
             this.reminderSettings = JSON.parse(saved);
             this.log('DEBUG: Loaded reminder settings:', this.reminderSettings);
-            this.log('DEBUG: Notification permission:', Notification.permission);
-
+            
+            // Restore reminders if they were enabled before
             if (this.reminderSettings.enabled) {
-                this.log('DEBUG: Reminders were enabled, attempting auto-restore...');
-                this.startReminders(true); // true = autoRestore mode
+                this.log('DEBUG: Reminders were previously enabled, restoring...');
+                this.startReminders(true); // Auto-restore mode
             }
         } else {
             this.log('DEBUG: No saved reminder settings found');
@@ -746,18 +752,226 @@ class WaterTracker {
 
     // Start Reminders
     async startReminders(isAutoRestore = false) {
-        this.log('DEBUG: startReminders called with isAutoRestore:', isAutoRestore);
-        this.log('DEBUG: Current notification permission:', Notification.permission);
+        this.log('DEBUG: startReminders called, isAutoRestore:', isAutoRestore);
+        this.log('DEBUG: Current browser permission:', Notification.permission);
+        this.log('DEBUG: User previously granted permission:', this.reminderSettings.userGrantedPermission);
         this.log('DEBUG: FCM available:', !!this.messaging);
 
-        // Check if running from file:// protocol (notifications may not work)
+        // Check if running from file:// protocol
         const isFileProtocol = window.location.protocol === 'file:';
         if (isFileProtocol) {
             this.log('DEBUG: Running from file:// protocol');
-            this.showToast('Use a Server', 'For best experience, run via a local server (npm start) for notifications to work', 'error');
-            // Don't disable - just return
+            this.showToast('Use Local Server', 'Run "npm start" for notifications to work', 'error');
             return;
         }
+
+        // Initialize FCM if we have a token but no messaging instance
+        if (this.messaging && !this.reminderSettings.fcmToken) {
+            this.log('DEBUG: Initializing FCM...');
+            await this.initializeFCM();
+        }
+
+        // KEY FIX: Always start the interval if reminders are enabled
+        // We don't require browser permission to start the interval
+        // Permission will be checked when actually sending notifications
+        
+        // Save enabled state
+        this.reminderSettings.enabled = true;
+        this.saveReminderSettings();
+
+        // Update UI toggle
+        const reminderToggle = document.getElementById('reminderToggle');
+        if (reminderToggle) {
+            reminderToggle.checked = true;
+        }
+
+        // Show retry button if user hasn't granted permission yet
+        const reminderRetry = document.getElementById('reminderRetry');
+        const reminderOptions = document.getElementById('reminderOptions');
+        
+        if (!this.reminderSettings.userGrantedPermission && Notification.permission !== 'granted') {
+            this.log('DEBUG: Permission not granted, showing retry button');
+            if (reminderRetry) reminderRetry.style.display = 'block';
+            if (reminderOptions) reminderOptions.style.display = 'block';
+            
+            // If this is a fresh enable (not auto-restore), request permission
+            if (!isAutoRestore) {
+                const granted = await this.requestNotificationPermission();
+                if (granted) {
+                    if (reminderRetry) reminderRetry.style.display = 'none';
+                    this.showToast('Reminders Enabled', `We'll notify you every ${this.reminderSettings.interval} minutes`, 'success');
+                }
+            }
+        } else {
+            this.log('DEBUG: Permission was previously granted');
+            if (reminderRetry) reminderRetry.style.display = 'none';
+            if (reminderOptions) reminderOptions.style.display = 'block';
+            
+            // Show success toast only on fresh enable
+            if (!isAutoRestore) {
+                this.showToast('Reminders Enabled', `We'll notify you every ${this.reminderSettings.interval} minutes`, 'success');
+            }
+        }
+
+        // Clear existing interval
+        if (this.reminderInterval) {
+            clearInterval(this.reminderInterval);
+        }
+
+        // Set up reminder interval (check every minute)
+        this.reminderInterval = setInterval(() => {
+            this.checkAndSendReminder();
+        }, CONFIG.REMINDER_CHECK_INTERVAL);
+
+        this.log('DEBUG: Reminder interval started successfully');
+    }
+
+    // Stop Reminders
+    stopReminders() {
+        this.reminderSettings.enabled = false;
+        this.reminderSettings.userGrantedPermission = false;
+        this.saveReminderSettings();
+
+        if (this.reminderInterval) {
+            clearInterval(this.reminderInterval);
+            this.reminderInterval = null;
+        }
+
+        // Update UI
+        const reminderToggle = document.getElementById('reminderToggle');
+        if (reminderToggle) {
+            reminderToggle.checked = false;
+        }
+        
+        const reminderOptions = document.getElementById('reminderOptions');
+        if (reminderOptions) {
+            reminderOptions.style.display = 'none';
+        }
+
+        const reminderRetry = document.getElementById('reminderRetry');
+        if (reminderRetry) {
+            reminderRetry.style.display = 'none';
+        }
+
+        this.log('DEBUG: Reminders stopped');
+        this.showToast('Reminders Disabled', 'You will no longer receive notifications', 'info');
+    }
+        } else {
+            this.log('DEBUG: No saved reminder settings found');
+        }
+    }
+
+    // Save Reminder Settings
+    saveReminderSettings() {
+        localStorage.setItem(STORAGE_KEYS.REMINDERS, JSON.stringify(this.reminderSettings));
+        this.log('DEBUG: Saved reminder settings:', this.reminderSettings);
+    }
+
+    // Start Reminders
+    async startReminders(isAutoRestore = false) {
+        this.log('DEBUG: startReminders called, isAutoRestore:', isAutoRestore);
+        this.log('DEBUG: Browser permission:', Notification.permission);
+        this.log('DEBUG: User granted before:', this.reminderSettings.userGrantedPermission);
+
+        // Check if running from file:// protocol
+        const isFileProtocol = window.location.protocol === 'file:';
+        if (isFileProtocol) {
+            this.log('DEBUG: Running from file:// protocol');
+            this.showToast('Use Local Server', 'Run "npm start" for notifications to work', 'error');
+            return;
+        }
+
+        // Initialize FCM if we have a token but no messaging instance
+        if (this.messaging && !this.reminderSettings.fcmToken) {
+            this.log('DEBUG: Initializing FCM...');
+            await this.initializeFCM();
+        }
+
+        // KEY FIX: Always start the interval if reminders are enabled
+        // We don't require browser permission to start the interval
+        // Permission will be checked when actually sending notifications
+        
+        // Save enabled state
+        this.reminderSettings.enabled = true;
+        this.saveReminderSettings();
+
+        // Update UI toggle
+        const reminderToggle = document.getElementById('reminderToggle');
+        if (reminderToggle) {
+            reminderToggle.checked = true;
+        }
+
+        // Show retry button if user hasn't granted permission yet
+        const reminderRetry = document.getElementById('reminderRetry');
+        const reminderOptions = document.getElementById('reminderOptions');
+        
+        if (!this.reminderSettings.userGrantedPermission && Notification.permission !== 'granted') {
+            this.log('DEBUG: Permission not granted, showing retry button');
+            if (reminderRetry) reminderRetry.style.display = 'block';
+            if (reminderOptions) reminderOptions.style.display = 'block';
+            
+            // If this is a fresh enable (not auto-restore), request permission
+            if (!isAutoRestore) {
+                const granted = await this.requestNotificationPermission();
+                if (granted) {
+                    if (reminderRetry) reminderRetry.style.display = 'none';
+                    this.showToast('Reminders Enabled', `We'll notify you every ${this.reminderSettings.interval} minutes`, 'success');
+                }
+            }
+        } else {
+            this.log('DEBUG: Permission was previously granted');
+            if (reminderRetry) reminderRetry.style.display = 'none';
+            if (reminderOptions) reminderOptions.style.display = 'block';
+            
+            // Show success toast only on fresh enable
+            if (!isAutoRestore) {
+                this.showToast('Reminders Enabled', `We'll notify you every ${this.reminderSettings.interval} minutes`, 'success');
+            }
+        }
+
+        // Clear existing interval
+        if (this.reminderInterval) {
+            clearInterval(this.reminderInterval);
+        }
+
+        // Set up reminder interval (check every minute)
+        this.reminderInterval = setInterval(() => {
+            this.checkAndSendReminder();
+        }, CONFIG.REMINDER_CHECK_INTERVAL);
+
+        this.log('DEBUG: Reminder interval started successfully');
+    }
+
+    // Stop Reminders
+    stopReminders() {
+        this.reminderSettings.enabled = false;
+        this.reminderSettings.userGrantedPermission = false;
+        this.saveReminderSettings();
+
+        if (this.reminderInterval) {
+            clearInterval(this.reminderInterval);
+            this.reminderInterval = null;
+        }
+
+        // Update UI
+        const reminderToggle = document.getElementById('reminderToggle');
+        if (reminderToggle) {
+            reminderToggle.checked = false;
+        }
+        
+        const reminderOptions = document.getElementById('reminderOptions');
+        if (reminderOptions) {
+            reminderOptions.style.display = 'none';
+        }
+
+        const reminderRetry = document.getElementById('reminderRetry');
+        if (reminderRetry) {
+            reminderRetry.style.display = 'none';
+        }
+
+        this.log('DEBUG: Reminders stopped');
+        this.showToast('Reminders Disabled', 'You will no longer receive notifications', 'info');
+    }
 
         // Initialize FCM (this will request permission and get token)
         if (this.messaging && !this.reminderSettings.fcmToken) {
@@ -816,32 +1030,7 @@ class WaterTracker {
             this.checkAndSendReminder();
         }, CONFIG.REMINDER_CHECK_INTERVAL);
 
-        this.log('DEBUG: Reminder interval started');
-        this.log('DEBUG: FCM Token saved:', !!this.reminderSettings.fcmToken);
-
-        // Only send welcome notification if this is a fresh enable (not auto-restore)
-        if (!isAutoRestore) {
-            this.sendNotification(
-                '💧 Reminders Enabled',
-                `We'll remind you every ${this.reminderSettings.interval} minutes to drink water!`,
-                'icon-192.png'
-            );
-        }
-
-        this.log('Reminders started with interval:', this.reminderSettings.interval);
-    }
-
-    // Stop Reminders
-    stopReminders() {
-        this.reminderSettings.enabled = false;
-        this.saveReminderSettings();
-
-        if (this.reminderInterval) {
-            clearInterval(this.reminderInterval);
-            this.reminderInterval = null;
-        }
-
-        this.log('Reminders stopped');
+        this.log('DEBUG: Reminder interval started successfully');
     }
 
     // Check and Send Reminder
@@ -895,7 +1084,7 @@ class WaterTracker {
         this.reminderSettings.lastReminder = now.toISOString();
         this.saveReminderSettings();
 
-        console.log('Reminder sent at:', now);
+        this.log('Reminder sent at:', now);
     }
 
     // Test method - Generate a random reminder for testing
@@ -923,39 +1112,39 @@ class WaterTracker {
         const body = `${randomMessage} You still need ${remaining}ml to reach your daily goal.`;
 
         this.sendNotification('🧪 TEST Reminder', body, 'icon-192.png');
-        console.log('Test reminder sent:', randomMessage);
+        this.log('Test reminder sent:', randomMessage);
         this.showToast('Test Sent', 'Check your notification!', 'success');
     }
 
     // Diagnostic method - Run this in console to debug notifications
     diagnoseNotifications() {
-        console.log('=== NOTIFICATION DIAGNOSTIC ===');
-        console.log('URL:', window.location.href);
-        console.log('Protocol:', window.location.protocol);
-        console.log('Notification permission:', Notification.permission);
-        console.log('Reminders enabled:', this.reminderSettings.enabled);
-        console.log('Reminder interval:', this.reminderSettings.interval);
-        console.log('Reminder interval running:', !!this.reminderInterval);
-        console.log('FCM available:', !!this.messaging);
-        console.log('FCM Token:', this.reminderSettings.fcmToken ? this.reminderSettings.fcmToken.substring(0, 20) + '...' : 'none');
-        console.log('LocalStorage hydrotracker-reminders:', localStorage.getItem('hydrotracker-reminders'));
-        console.log('===============================');
-        console.log('To enable notifications:');
-        console.log('1. Click the lock/settings icon in browser address bar');
-        console.log('2. Find "Notifications" or "Permissions"');
-        console.log('3. Set to "Allow"');
-        console.log('4. Reload the page');
-        console.log('===============================');
-
+        this.log('=== NOTIFICATION DIAGNOSTIC ===');
+        this.log('URL:', window.location.href);
+        this.log('Protocol:', window.location.protocol);
+        this.log('Browser permission:', Notification.permission);
+        this.log('User granted before:', this.reminderSettings.userGrantedPermission);
+        this.log('Reminders enabled:', this.reminderSettings.enabled);
+        this.log('Reminder interval:', this.reminderSettings.interval);
+        this.log('Interval running:', !!this.reminderInterval);
+        this.log('FCM available:', !!this.messaging);
+        this.log('FCM Token:', this.reminderSettings.fcmToken ? this.reminderSettings.fcmToken.substring(0, 20) + '...' : 'none');
+        this.log('LocalStorage:', localStorage.getItem(STORAGE_KEYS.REMINDERS));
+        this.log('===============================');
+        this.log('To enable notifications:');
+        this.log('1. Click the lock/settings icon in browser address bar');
+        this.log('2. Find "Notifications" or "Permissions"');
+        this.log('3. Set to "Allow"');
+        this.log('4. Click "Retry Notifications" button in Settings');
+        this.log('===============================');
         this.showToast('Diagnostic', 'Check console for details', 'info');
     }
 
     // Force re-check permissions and start reminders
     retryNotifications() {
-        console.log('DEBUG: Retrying notification setup...');
+        this.log('DEBUG: Retrying notification setup...');
         this.reminderSettings.enabled = true;
         this.saveReminderSettings();
-        this.startReminders(false); // false = not auto-restore, will request permission
+        this.startReminders(false); // false = not auto-restore
     }
 
     // Update Reminder Interval
@@ -965,7 +1154,7 @@ class WaterTracker {
 
         if (this.reminderSettings.enabled) {
             // Restart with new interval
-            this.startReminders();
+            this.startReminders(false);
         }
     }
 
@@ -1590,6 +1779,7 @@ class WaterTracker {
         const reminderToggle = document.getElementById('reminderToggle');
         const reminderOptions = document.getElementById('reminderOptions');
         const reminderInterval = document.getElementById('reminderInterval');
+        const reminderRetry = document.getElementById('reminderRetry');
 
         if (reminderToggle) {
             // Set initial state from saved settings
@@ -1600,6 +1790,15 @@ class WaterTracker {
             if (reminderInterval) {
                 reminderInterval.value = this.reminderSettings.interval;
             }
+            
+            // Show retry button if enabled but no permission granted
+            if (reminderRetry && this.reminderSettings.enabled && 
+                !this.reminderSettings.userGrantedPermission && 
+                Notification.permission !== 'granted') {
+                reminderRetry.style.display = 'block';
+            } else if (reminderRetry) {
+                reminderRetry.style.display = 'none';
+            }
 
             reminderToggle.addEventListener('change', async () => {
                 const isEnabled = reminderToggle.checked;
@@ -1608,11 +1807,9 @@ class WaterTracker {
                 }
 
                 if (isEnabled) {
-                    await this.startReminders();
-                    this.showToast('Reminders Enabled', `We'll notify you every ${this.reminderSettings.interval} minutes`, 'success');
+                    await this.startReminders(false); // Fresh enable - will request permission
                 } else {
                     this.stopReminders();
-                    this.showToast('Reminders Disabled', 'You will no longer receive notifications', 'info');
                 }
             });
         }
@@ -1627,16 +1824,10 @@ class WaterTracker {
 
         // Retry notifications button
         const retryNotificationsBtn = document.getElementById('retryNotificationsBtn');
-        const reminderRetry = document.getElementById('reminderRetry');
         if (retryNotificationsBtn) {
             retryNotificationsBtn.addEventListener('click', () => {
                 this.retryNotifications();
             });
-        }
-
-        // Show retry button if reminders are enabled but permission not granted
-        if (reminderRetry && this.reminderSettings.enabled && Notification.permission !== 'granted') {
-            reminderRetry.style.display = 'block';
         }
 
         // Window resize for chart
