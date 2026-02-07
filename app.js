@@ -52,7 +52,29 @@ class WaterTracker {
         // DOM Element Cache
         this.domCache = {};
 
+        // Page Visibility API to pause animations/intervals when backgrounded
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                this.stopAnimations();
+            } else {
+                this.resumeAnimations();
+            }
+        });
+
         this.init();
+    }
+
+    stopAnimations() {
+        if (this.bubbleInterval) {
+            clearInterval(this.bubbleInterval);
+            this.bubbleInterval = null;
+        }
+    }
+
+    resumeAnimations() {
+        if (this.currentAmount > 0) {
+            this.startBubbleAnimation();
+        }
     }
 
     // Helper method for debug logging
@@ -1044,8 +1066,10 @@ class WaterTracker {
     }
 
     getToday() {
+        // Fix: Use local date instead of UTC to avoid timezone issues
+        // Returns YYYY-MM-DD format in local timezone
         const now = new Date();
-        return now.toISOString().split('T')[0];
+        return now.toLocaleDateString('en-CA');
     }
 
     checkNewDay() {
@@ -1056,7 +1080,7 @@ class WaterTracker {
             // New day - check if we need to update streak
             const yesterday = new Date();
             yesterday.setDate(yesterday.getDate() - 1);
-            const yesterdayDate = yesterday.toISOString().split('T')[0];
+            const yesterdayDate = yesterday.toLocaleDateString('en-CA');
             const yesterdayData = this.history.find(d => d.date === yesterdayDate);
 
             if (yesterdayData && yesterdayData.amount >= this.dailyGoal) {
@@ -1203,7 +1227,10 @@ class WaterTracker {
         document.getElementById('goalAmount').textContent = this.dailyGoal;
 
         // Calculate actual percentage (can exceed 100%)
-        const actualPercentage = (this.currentAmount / this.dailyGoal) * 100;
+        let actualPercentage = 0;
+        if (this.dailyGoal > 0) {
+            actualPercentage = (this.currentAmount / this.dailyGoal) * 100;
+        }
         const percentageEl = document.getElementById('percentage');
         percentageEl.textContent = Math.round(actualPercentage) + '%';
 
@@ -1369,7 +1396,7 @@ class WaterTracker {
         for (let i = 6; i >= 0; i--) {
             const date = new Date();
             date.setDate(date.getDate() - i);
-            days.push(date.toISOString().split('T')[0]);
+            days.push(date.toLocaleDateString('en-CA'));
         }
         return days;
     }
@@ -1394,7 +1421,10 @@ class WaterTracker {
         const bubblesContainer = document.getElementById('bubbles');
         if (!bubblesContainer) return;
 
-        setInterval(() => {
+        // Clear existing interval if any
+        if (this.bubbleInterval) clearInterval(this.bubbleInterval);
+
+        this.bubbleInterval = setInterval(() => {
             if (this.currentAmount > 0) {
                 const bubble = document.createElement('div');
                 bubble.className = 'bubble';
@@ -1653,9 +1683,13 @@ class WaterTracker {
             });
         }
 
-        // Window resize for chart
+        // Window resize for chart (Debounced)
+        let resizeTimeout;
         window.addEventListener('resize', () => {
-            this.renderChart();
+            clearTimeout(resizeTimeout);
+            resizeTimeout = setTimeout(() => {
+                this.renderChart();
+            }, 250);
         });
 
         // Install prompt close
