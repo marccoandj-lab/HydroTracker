@@ -1,0 +1,22 @@
+{
+  "name": "hydrotracker-water-tracker",
+  "version": "1.0.0",
+  "description": "Modern water consumption tracking web application",
+  "main": "index.html",
+  "scripts": {
+    "start": "npx serve .",
+    "deploy": "echo 'Ready for deployment - see README.md for instructions'"
+  },
+  "keywords": [
+    "water",
+    "tracker",
+    "hydration",
+    "health",
+    "wellness"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "serve": "^14.2.0"
+  }
+}
