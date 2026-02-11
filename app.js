@@ -349,26 +349,11 @@ class WaterTracker {
                 this.auth = firebase.auth();
                 this.db = firebase.firestore();
 
-                // Initialize Firebase Cloud Messaging
-                if (firebase.messaging) {
-                    try {
-                        this.messaging = firebase.messaging();
-                        console.log('✅ Firebase Cloud Messaging initialized');
-
-                        // Listen for foreground messages
-                        this.messaging.onMessage((payload) => {
-                            console.log('Foreground message received:', payload);
-                            this.showToast(
-                                payload.notification.title || '💧 Reminder',
-                                payload.notification.body || 'Time to drink water!',
-                                'info'
-                            );
-                        });
-                    } catch (messagingError) {
-                        console.warn('⚠️ FCM initialization failed (VAPID key may not be configured):', messagingError);
-                        this.messaging = null;
-                    }
-                }
+                // Skip Firebase Cloud Messaging - using standard browser notifications instead
+                // FCM requires VAPID key configuration and service worker setup
+                // Standard notifications work on both localhost and Vercel without extra config
+                this.messaging = null;
+                console.log('ℹ️ Using standard browser notifications (FCM disabled)');
 
                 console.log('✅ Firebase initialized successfully');
             } catch (error) {
@@ -656,94 +641,111 @@ class WaterTracker {
     }
 
     // Notification System
-    // Initialize FCM Token
+    // Initialize FCM Token (disabled - using browser notifications only)
     async initializeFCM() {
-        if (!this.messaging) {
-            this.log('FCM not available - using browser notifications only');
-            return false;
-        }
-
-        try {
-            // Request permission first
-            const permission = await Notification.requestPermission();
-            if (permission !== 'granted') {
-                this.log('Notification permission not granted for FCM');
-                return false;
-            }
-
-            // Get FCM token
-            const token = await this.messaging.getToken({
-                vapidKey: 'BEl62iUYgUivxIkv69yViEuiBIa-Ib9-SkvMeAtA3LFgDzkrxZJjSgSnfckjBJuBkr3qBUYIHBQFLXYp5Nksh8U'
-            });
-
-            if (token) {
-                this.reminderSettings.fcmToken = token;
-                this.reminderSettings.userGrantedPermission = true;
-                this.saveReminderSettings();
-                this.log('FCM Token obtained:', token.substring(0, 20) + '...');
-                return true;
-            }
-        } catch (error) {
-            this.log('FCM initialization error:', error);
-        }
+        // FCM requires a valid VAPID key from Firebase Console
+        // For now, we use standard browser notifications which work everywhere
+        this.log('Using standard browser notifications (FCM disabled)');
         return false;
     }
 
     // Request Notification Permission
     async requestNotificationPermission() {
+        console.log('=== REQUEST NOTIFICATION PERMISSION ===');
+        console.log('Notification API available:', 'Notification' in window);
+        console.log('Current permission before request:', Notification.permission);
+
         if (!('Notification' in window)) {
+            console.error('ERROR: Notification API not available');
             this.showToast('Not Supported', 'Your browser does not support notifications', 'error');
             return false;
         }
 
         try {
+            console.log('Requesting permission...');
             const permission = await Notification.requestPermission();
+            console.log('Permission result:', permission);
+
             if (permission === 'granted') {
-                this.log('Notification permission granted');
+                console.log('✅ Notification permission granted');
                 this.reminderSettings.userGrantedPermission = true;
                 this.saveReminderSettings();
+                
+                // Test notification immediately to verify it works
+                setTimeout(() => {
+                    this.sendNotification('✅ Notifications Enabled', 'You will now receive hydration reminders!', 'icon-192.png');
+                }, 1000);
+                
                 return true;
             } else {
+                console.error('❌ Permission denied:', permission);
                 this.showToast('Permission Denied', 'Please enable notifications in your browser settings', 'error');
                 this.reminderSettings.userGrantedPermission = false;
                 this.saveReminderSettings();
                 return false;
             }
         } catch (error) {
-            this.log('Notification permission error:', error);
+            console.error('❌ Error requesting permission:', error);
+            console.error('Error stack:', error.stack);
             return false;
         }
     }
 
     // Send Notification
     sendNotification(title, body, icon = 'icon-192.png') {
-        console.log('Sending notification:', title, body);
+        console.log('=== SEND NOTIFICATION ===');
+        console.log('Title:', title);
+        console.log('Body:', body);
+        console.log('Icon:', icon);
+        console.log('Notification API available:', 'Notification' in window);
+        console.log('Permission status:', Notification.permission);
 
         // Show in-app toast notification (always works)
         this.showToast(title, body, 'info');
 
         // Try browser notification
-        if ('Notification' in window && Notification.permission === 'granted') {
-            try {
-                const notification = new Notification(title, {
-                    body: body,
-                    icon: icon,
-                    badge: icon,
-                    tag: 'hydrotracker-reminder',
-                    requireInteraction: false,
-                    silent: false
-                });
+        if (!('Notification' in window)) {
+            console.error('ERROR: Notification API not available');
+            return;
+        }
 
-                notification.onclick = () => {
-                    window.focus();
-                    notification.close();
-                };
+        if (Notification.permission !== 'granted') {
+            console.error('ERROR: Notification permission not granted, current status:', Notification.permission);
+            return;
+        }
 
-                console.log('Browser notification sent:', title);
-                return;
-            } catch (error) {
-                console.error('Browser notification error:', error);
-            }
+        try {
+            // Use absolute URL for icon to ensure it works on both localhost and Vercel
+            const iconUrl = icon.startsWith('http') ? icon : window.location.origin + '/' + icon;
+            console.log('Using icon URL:', iconUrl);
+
+            const notification = new Notification(title, {
+                body: body,
+                icon: iconUrl,
+                badge: iconUrl,
+                tag: 'hydrotracker-reminder',
+                requireInteraction: false,
+                silent: false
+            });
+
+            notification.onclick = () => {
+                console.log('Notification clicked');
+                window.focus();
+                notification.close();
+            };
+
+            notification.onerror = (err) => {
+                console.error('Notification error event:', err);
+            };
+
+            notification.onshow = () => {
+                console.log('Notification shown successfully');
+            };
+
+            console.log('✅ Browser notification created:', title);
+        } catch (error) {
+            console.error('❌ Browser notification error:', error);
+            console.error('Error stack:', error.stack);
         }
     }
 
@@ -801,24 +803,35 @@ class WaterTracker {
 
     // Start Reminders
     async startReminders(isAutoRestore = false) {
-        this.log('DEBUG: startReminders called, isAutoRestore:', isAutoRestore);
-        this.log('DEBUG: Current browser permission:', Notification.permission);
-        this.log('DEBUG: User previously granted permission:', this.reminderSettings.userGrantedPermission);
-        this.log('DEBUG: FCM available:', !!this.messaging);
-        this.log('DEBUG: Scheduled times:', this.reminderSettings.scheduledTimes);
+        console.log('=== START REMINDERS ===');
+        console.log('isAutoRestore:', isAutoRestore);
+        console.log('Notification API available:', 'Notification' in window);
+        console.log('Current permission:', Notification.permission);
+        console.log('User previously granted:', this.reminderSettings.userGrantedPermission);
+        console.log('Scheduled times:', this.reminderSettings.scheduledTimes);
+        console.log('Current URL:', window.location.href);
+        console.log('Protocol:', window.location.protocol);
+        console.log('Service Worker supported:', 'serviceWorker' in navigator);
 
         // Check if running from file:// protocol
         const isFileProtocol = window.location.protocol === 'file:';
         if (isFileProtocol) {
-            this.log('DEBUG: Running from file:// protocol');
+            console.log('ERROR: Running from file:// protocol');
             this.showToast('Use Local Server', 'Run "npm start" for notifications to work', 'error');
             return;
         }
 
-        // Initialize FCM if we have a token but no messaging instance
-        if (this.messaging && !this.reminderSettings.fcmToken) {
-            this.log('DEBUG: Initializing FCM...');
-            await this.initializeFCM();
+        // Check if notifications are supported
+        if (!('Notification' in window)) {
+            console.error('ERROR: Notifications not supported in this browser');
+            this.showToast('Not Supported', 'Your browser does not support notifications', 'error');
+            return;
+        }
+
+        // Check if service worker is registered (needed for notifications on some browsers)
+        if ('serviceWorker' in navigator) {
+            const registration = await navigator.serviceWorker.ready;
+            console.log('Service Worker ready:', registration.scope);
         }
 
         // Save enabled state
@@ -1064,25 +1077,40 @@ class WaterTracker {
     }
 
     // Diagnostic method - Run this in console to debug notifications
-    diagnoseNotifications() {
-        this.log('=== NOTIFICATION DIAGNOSTIC ===');
-        this.log('URL:', window.location.href);
-        this.log('Protocol:', window.location.protocol);
-        this.log('Browser permission:', Notification.permission);
-        this.log('User granted before:', this.reminderSettings.userGrantedPermission);
-        this.log('Reminders enabled:', this.reminderSettings.enabled);
-        this.log('Scheduled times:', this.reminderSettings.scheduledTimes?.join(', ') || 'not set');
-        this.log('Last reminders:', this.reminderSettings.lastReminders);
-        this.log('Interval running:', !!this.reminderInterval);
-        this.log('FCM available:', !!this.messaging);
-        this.log('FCM Token:', this.reminderSettings.fcmToken ? this.reminderSettings.fcmToken.substring(0, 20) + '...' : 'none');
-        this.log('LocalStorage:', localStorage.getItem(STORAGE_KEYS.REMINDERS));
-        this.log('===============================');
-        this.log('Available commands:');
-        this.log('- waterTracker.sendManualNotification("Your message")');
-        this.log('- waterTracker.testRandomReminder()');
-        this.log('- waterTracker.diagnoseNotifications()');
-        this.log('===============================');
+    async diagnoseNotifications() {
+        console.log('=== NOTIFICATION DIAGNOSTIC ===');
+        console.log('URL:', window.location.href);
+        console.log('Origin:', window.location.origin);
+        console.log('Protocol:', window.location.protocol);
+        console.log('Browser permission:', Notification.permission);
+        console.log('User granted before:', this.reminderSettings.userGrantedPermission);
+        console.log('Reminders enabled:', this.reminderSettings.enabled);
+        console.log('Scheduled times:', this.reminderSettings.scheduledTimes?.join(', ') || 'not set');
+        console.log('Last reminders:', this.reminderSettings.lastReminders);
+        console.log('Interval running:', !!this.reminderInterval);
+        console.log('Service Worker supported:', 'serviceWorker' in navigator);
+        
+        // Check service worker registration
+        if ('serviceWorker' in navigator) {
+            try {
+                const registrations = await navigator.serviceWorker.getRegistrations();
+                console.log('Service Worker registrations:', registrations.length);
+                registrations.forEach((reg, i) => {
+                    console.log(`  SW ${i}:`, reg.scope, 'Active:', !!reg.active);
+                });
+            } catch (e) {
+                console.error('Error getting SW registrations:', e);
+            }
+        }
+        
+        console.log('LocalStorage reminder settings:', localStorage.getItem(STORAGE_KEYS.REMINDERS));
+        console.log('===============================');
+        console.log('Available commands:');
+        console.log('- waterTracker.sendManualNotification("Your message")');
+        console.log('- waterTracker.testRandomReminder()');
+        console.log('- waterTracker.diagnoseNotifications()');
+        console.log('- waterTracker.retryNotifications()');
+        console.log('===============================');
         this.showToast('Diagnostic', 'Check console for details', 'info');
     }
 
@@ -1114,6 +1142,23 @@ class WaterTracker {
 
     // Send manual notification
     sendManualNotification(customMessage = null) {
+        console.log('=== SEND MANUAL NOTIFICATION ===');
+        console.log('Custom message:', customMessage);
+        console.log('Notification permission:', Notification.permission);
+        console.log('Reminders enabled:', this.reminderSettings.enabled);
+
+        if (!this.reminderSettings.enabled) {
+            console.error('ERROR: Reminders are not enabled');
+            this.showToast('Reminders Disabled', 'Enable reminders first in settings', 'error');
+            return;
+        }
+
+        if (Notification.permission !== 'granted') {
+            console.error('ERROR: Notification permission not granted');
+            this.showToast('Permission Required', 'Please enable notifications in browser settings', 'error');
+            return;
+        }
+
         const messages = [
             'Time to hydrate! 💧',
             'Your body needs water! 💧',
@@ -1129,8 +1174,9 @@ class WaterTracker {
             ? `${message} You still need ${remaining}ml to reach your daily goal.`
             : `${message} You've reached your daily goal! Great job! 🎉`;
 
+        console.log('Sending notification with body:', body);
         this.sendNotification('💧 Manual Reminder', body, 'icon-192.png');
-        this.log('Manual notification sent:', message);
+        console.log('✅ Manual notification sent');
         this.showToast('Notification Sent', 'Check your notification!', 'success');
     }
 
