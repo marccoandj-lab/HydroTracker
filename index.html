@@ -33,8 +33,8 @@
     <script defer src="https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-compat.js"></script>
     
     <!-- Firebase Config - EDIT THIS FILE WITH YOUR CONFIG -->
-    <!-- Added v=3 for cache busting after notification fix -->
-    <script defer src="firebase-config.js?v=3"></script>
+    <!-- Added v=4 for cache busting after FCM setup -->
+    <script defer src="firebase-config.js?v=4"></script>
     
     <!-- Diagnostic: Verify Firebase config is loaded -->
     <script defer>
@@ -622,19 +622,21 @@
     <!-- Toast Notifications -->
     <div class="toast-container" id="toastContainer"></div>
 
-    <!-- App JS with cache busting v=3 for notification fixes -->
-    <script defer src="app.js?v=3"></script>
+    <!-- App JS with cache busting v=4 for FCM background notifications -->
+    <script defer src="app.js?v=4"></script>
     <script>
-        // Register Service Worker for notifications
-        // This works on both localhost and Vercel
+        // Register Service Worker for background notifications
+        // This enables push notifications even when app is closed
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {
                 // Use absolute path from root to work on any domain
-                const swPath = '/firebase-messaging-sw.js?v=3';
+                const swPath = '/firebase-messaging-sw.js?v=4';
                 
-                console.log('Attempting to register service worker at:', swPath);
+                console.log('=== SERVICE WORKER REGISTRATION ===');
+                console.log('Attempting to register:', swPath);
                 console.log('Current origin:', window.location.origin);
                 console.log('Current pathname:', window.location.pathname);
+                console.log('Is HTTPS:', window.location.protocol === 'https:');
                 
                 navigator.serviceWorker.register(swPath)
                     .then(function(registration) {
@@ -642,15 +644,24 @@
                         console.log('Scope:', registration.scope);
                         console.log('Active:', registration.active ? 'Yes' : 'No');
                         console.log('Installing:', registration.installing ? 'Yes' : 'No');
+                        console.log('Waiting:', registration.waiting ? 'Yes' : 'No');
+                        
+                        // Make registration available globally for FCM
+                        window.swRegistration = registration;
                     })
                     .catch(function(error) {
                         console.error('❌ Service Worker registration failed:', error);
                         console.error('Error name:', error.name);
                         console.error('Error message:', error.message);
+                        console.error('This usually means:');
+                        console.error('1. Not running on HTTPS (required for push notifications)');
+                        console.error('2. Service worker file not found at the path');
+                        console.error('3. Browser does not support service workers');
                     });
             });
         } else {
             console.warn('⚠️ Service Workers not supported in this browser');
+            console.warn('Background notifications will not work');
         }
     </script>
 </body>

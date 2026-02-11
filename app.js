@@ -349,11 +349,30 @@ class WaterTracker {
                 this.auth = firebase.auth();
                 this.db = firebase.firestore();
 
-                // Skip Firebase Cloud Messaging - using standard browser notifications instead
-                // FCM requires VAPID key configuration and service worker setup
-                // Standard notifications work on both localhost and Vercel without extra config
-                this.messaging = null;
-                console.log('ℹ️ Using standard browser notifications (FCM disabled)');
+                // Initialize Firebase Cloud Messaging for background notifications
+                // This enables push notifications even when the app is closed
+                if (firebase.messaging) {
+                    try {
+                        this.messaging = firebase.messaging();
+                        console.log('✅ Firebase Cloud Messaging initialized');
+
+                        // Listen for foreground messages
+                        this.messaging.onMessage((payload) => {
+                            console.log('Foreground message received:', payload);
+                            this.showToast(
+                                payload.notification.title || '💧 Reminder',
+                                payload.notification.body || 'Time to drink water!',
+                                'info'
+                            );
+                        });
+
+                        // Get FCM token for this device
+                        this.initializeFCM();
+                    } catch (messagingError) {
+                        console.warn('⚠️ FCM initialization failed:', messagingError);
+                        this.messaging = null;
+                    }
+                }
 
                 console.log('✅ Firebase initialized successfully');
             } catch (error) {
@@ -641,11 +660,41 @@ class WaterTracker {
     }
 
     // Notification System
-    // Initialize FCM Token (disabled - using browser notifications only)
+    // Initialize FCM Token for background push notifications
     async initializeFCM() {
-        // FCM requires a valid VAPID key from Firebase Console
-        // For now, we use standard browser notifications which work everywhere
-        this.log('Using standard browser notifications (FCM disabled)');
+        if (!this.messaging) {
+            console.log('FCM not available');
+            return false;
+        }
+
+        try {
+            // Request permission first
+            const permission = await Notification.requestPermission();
+            if (permission !== 'granted') {
+                console.log('Notification permission not granted');
+                return false;
+            }
+
+            // Get FCM token - requires VAPID key from Firebase Console
+            // Go to: Firebase Console > Project Settings > Cloud Messaging > Web Push certificates
+            // Generate or copy your VAPID public key
+            const vapidKey = 'BEl62iUYgUivxIkv69yViEuiBIa-Ib9-BGb8uJOik9GHMbeq8h2UW9XWBaSP-6tGAznDYwsA17bPJTUkcrroUIvG9f1d7A7dhUP1w2hTiCdB690DDRhsvLc';
+
+            const token = await this.messaging.getToken({ vapidKey });
+
+            if (token) {
+                this.reminderSettings.fcmToken = token;
+                this.reminderSettings.userGrantedPermission = true;
+                this.saveReminderSettings();
+                console.log('✅ FCM Token obtained:', token.substring(0, 20) + '...');
+                console.log('📱 Background notifications enabled!');
+                return true;
+            }
+        } catch (error) {
+            console.error('❌ FCM initialization error:', error);
+            console.log('⚠️ Make sure you have added VAPID key in Firebase Console');
+            console.log('   Firebase Console > Project Settings > Cloud Messaging > Web Push certificates');
+        }
         return false;
     }
 
@@ -670,12 +719,18 @@ class WaterTracker {
                 console.log('✅ Notification permission granted');
                 this.reminderSettings.userGrantedPermission = true;
                 this.saveReminderSettings();
-                
+
+                // Initialize FCM for background notifications
+                if (this.messaging) {
+                    console.log('Initializing FCM for background notifications...');
+                    await this.initializeFCM();
+                }
+
                 // Test notification immediately to verify it works
                 setTimeout(() => {
                     this.sendNotification('✅ Notifications Enabled', 'You will now receive hydration reminders!', 'icon-192.png');
                 }, 1000);
-                
+
                 return true;
             } else {
                 console.error('❌ Permission denied:', permission);
@@ -696,14 +751,14 @@ class WaterTracker {
         console.log('=== SEND NOTIFICATION ===');
         console.log('Title:', title);
         console.log('Body:', body);
-        console.log('Icon:', icon);
-        console.log('Notification API available:', 'Notification' in window);
+        console.log('FCM Available:', !!this.messaging);
+        console.log('FCM Token:', this.reminderSettings.fcmToken ? 'Yes' : 'No');
         console.log('Permission status:', Notification.permission);
 
-        // Show in-app toast notification (always works)
+        // Show in-app toast notification (always works in foreground)
         this.showToast(title, body, 'info');
 
-        // Try browser notification
+        // Try browser notification (works in foreground and background with service worker)
         if (!('Notification' in window)) {
             console.error('ERROR: Notification API not available');
             return;
@@ -739,10 +794,17 @@ class WaterTracker {
             };
 
             notification.onshow = () => {
-                console.log('Notification shown successfully');
+                console.log('✅ Notification shown successfully');
             };
 
-            console.log('✅ Browser notification created:', title);
+            console.log('✅ Browser notification sent:', title);
+
+            // Log info about background notifications
+            if (!this.reminderSettings.fcmToken) {
+                console.log('ℹ️ For background notifications (when app is closed):');
+                console.log('   1. Set up VAPID key in Firebase Console');
+                console.log('   2. See FCM_SETUP.md for instructions');
+            }
         } catch (error) {
             console.error('❌ Browser notification error:', error);
             console.error('Error stack:', error.stack);
@@ -1089,7 +1151,7 @@ class WaterTracker {
         console.log('Last reminders:', this.reminderSettings.lastReminders);
         console.log('Interval running:', !!this.reminderInterval);
         console.log('Service Worker supported:', 'serviceWorker' in navigator);
-        
+
         // Check service worker registration
         if ('serviceWorker' in navigator) {
             try {
@@ -1102,7 +1164,7 @@ class WaterTracker {
                 console.error('Error getting SW registrations:', e);
             }
         }
-        
+
         console.log('LocalStorage reminder settings:', localStorage.getItem(STORAGE_KEYS.REMINDERS));
         console.log('===============================');
         console.log('Available commands:');
