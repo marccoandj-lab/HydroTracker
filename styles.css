@@ -1293,6 +1293,62 @@ body.dark-theme .moon-icon,
     margin-top: 0.5rem;
 }
 
+/* Time Input Styles */
+.time-inputs {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    margin-top: 0.5rem;
+}
+
+.time-input-group {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.time-input {
+    flex: 0 0 auto;
+    width: 120px;
+    padding: 0.75rem 1rem;
+    background: var(--bg-card);
+    border: 2px solid rgba(255, 255, 255, 0.1);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 1rem;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.time-input:hover {
+    background: var(--bg-card-hover);
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+.time-input:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(0, 242, 255, 0.1);
+}
+
+.time-label {
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+    min-width: 80px;
+}
+
+/* Light theme adjustments for time inputs */
+[data-theme="light"] .time-input {
+    background: white;
+    border-color: rgba(0, 0, 0, 0.1);
+    color: #333;
+}
+
+[data-theme="light"] .time-input:hover {
+    border-color: rgba(0, 0, 0, 0.2);
+}
+
 /* Celebration */
 .celebration {
     display: none;
@@ -1730,6 +1786,24 @@ body.dark-theme .moon-icon,
 
     .modal-content {
         margin: 1rem;
+    }
+
+    .time-inputs {
+        gap: 0.5rem;
+    }
+
+    .time-input-group {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.25rem;
+    }
+
+    .time-input {
+        width: 100%;
+    }
+
+    .time-label {
+        font-size: 0.75rem;
     }
 }
 
