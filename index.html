@@ -33,7 +33,23 @@
     <script defer src="https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-compat.js"></script>
     
     <!-- Firebase Config - EDIT THIS FILE WITH YOUR CONFIG -->
-    <script defer src="firebase-config.js"></script>
+    <!-- Added v=2 for cache busting after config fix -->
+    <script defer src="firebase-config.js?v=2"></script>
+    
+    <!-- Diagnostic: Verify Firebase config is loaded -->
+    <script defer>
+        window.addEventListener('load', function() {
+            console.log('=== Firebase Config Diagnostic ===');
+            console.log('firebaseConfig defined:', typeof firebaseConfig !== 'undefined');
+            if (typeof firebaseConfig !== 'undefined') {
+                console.log('Project ID:', firebaseConfig.projectId);
+                console.log('Auth Domain:', firebaseConfig.authDomain);
+                console.log('API Key present:', !!firebaseConfig.apiKey);
+            }
+            console.log('Firebase SDK loaded:', typeof firebase !== 'undefined');
+            console.log('===================================');
+        });
+    </script>
 </head>
 <body>
     <!-- Loading Screen -->
@@ -613,9 +629,10 @@
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {
                 // Use relative path to work on both local and deployed environments
+                // Added v=2 for cache busting after config fix
                 const swPath = window.location.pathname.includes('/New%20folder') 
-                    ? 'firebase-messaging-sw.js' 
-                    : './firebase-messaging-sw.js';
+                    ? 'firebase-messaging-sw.js?v=2' 
+                    : './firebase-messaging-sw.js?v=2';
                 
                 navigator.serviceWorker.register(swPath)
                     .then(function(registration) {
@@ -624,7 +641,7 @@
                     .catch(function(error) {
                         console.log('FCM Service Worker registration failed:', error);
                         // Fallback to root-relative path
-                        navigator.serviceWorker.register('/firebase-messaging-sw.js')
+                        navigator.serviceWorker.register('/firebase-messaging-sw.js?v=2')
                             .then(function(registration) {
                                 console.log('FCM Service Worker registered (fallback):', registration.scope);
                             })

@@ -754,7 +754,7 @@ class WaterTracker {
 
         if (saved) {
             const parsed = JSON.parse(saved);
-            
+
             // Migration: Check if using old interval-based format and convert to new time-based format
             if (parsed.interval && !parsed.scheduledTimes) {
                 this.log('DEBUG: Migrating from interval-based to time-based reminders');
@@ -763,23 +763,23 @@ class WaterTracker {
                 parsed.scheduledTimes = ['09:00', '13:00', '18:00']; // Default 3 times
                 delete parsed.interval;
             }
-            
+
             // Migration: Convert lastReminder (single) to lastReminders (object)
             if (parsed.lastReminder && !parsed.lastReminders) {
                 parsed.lastReminders = {};
                 delete parsed.lastReminder;
             }
-            
+
             // Ensure lastReminders exists
             if (!parsed.lastReminders) {
                 parsed.lastReminders = {};
             }
-            
+
             // Ensure scheduledTimes exists
             if (!parsed.scheduledTimes) {
                 parsed.scheduledTimes = [...CONFIG.DEFAULT_REMINDER_TIMES];
             }
-            
+
             this.reminderSettings = { ...this.reminderSettings, ...parsed };
             this.log('DEBUG: Loaded reminder settings:', this.reminderSettings);
 
@@ -892,7 +892,7 @@ class WaterTracker {
         this.reminderSettings.scheduledTimes.forEach(time => {
             const lastSent = this.reminderSettings.lastReminders[time];
             const scheduledToday = new Date(`${today}T${time}:00`);
-            
+
             // Check if this time has passed today and hasn't been sent today
             if (now > scheduledToday) {
                 const lastSentDate = lastSent ? new Date(lastSent).toLocaleDateString('en-CA') : null;
@@ -964,7 +964,7 @@ class WaterTracker {
             if (this.isTimeWithinWindow(currentTime, scheduledTime, 1)) {
                 const lastSent = this.reminderSettings.lastReminders[scheduledTime];
                 const lastSentDate = lastSent ? new Date(lastSent).toLocaleDateString('en-CA') : null;
-                
+
                 // Only send if not already sent today for this time
                 if (lastSentDate !== today) {
                     this.log('DEBUG: Time to send reminder for', scheduledTime);
@@ -1122,10 +1122,10 @@ class WaterTracker {
             'Drink up for better health! 💧',
             'Keep that water flowing! 💧'
         ];
-        
+
         const message = customMessage || messages[Math.floor(Math.random() * messages.length)];
         const remaining = Math.max(0, this.dailyGoal - this.currentAmount);
-        const body = remaining > 0 
+        const body = remaining > 0
             ? `${message} You still need ${remaining}ml to reach your daily goal.`
             : `${message} You've reached your daily goal! Great job! 🎉`;
 
@@ -1778,13 +1778,13 @@ class WaterTracker {
             if (manualNotificationSection) {
                 manualNotificationSection.style.display = this.reminderSettings.enabled ? 'block' : 'none';
             }
-            
+
             // Show quick notify button if enabled and permission granted
             const hasPermission = this.reminderSettings.userGrantedPermission || Notification.permission === 'granted';
             if (quickNotifyBtn) {
                 quickNotifyBtn.style.display = (this.reminderSettings.enabled && hasPermission) ? 'flex' : 'none';
             }
-            
+
             // Set time inputs from saved settings
             const times = this.reminderSettings.scheduledTimes || CONFIG.DEFAULT_REMINDER_TIMES;
             if (reminderTime1) reminderTime1.value = times[0] || '09:00';
