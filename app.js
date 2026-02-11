@@ -3,7 +3,7 @@
 // Configuration Constants
 const CONFIG = {
     DEFAULT_DAILY_GOAL: 2000, // ml
-    DEFAULT_REMINDER_INTERVAL: 60, // minutes
+    DEFAULT_REMINDER_TIMES: ['09:00', '13:00', '18:00'], // 3 times per day (9 AM, 1 PM, 6 PM)
     REMINDER_CHECK_INTERVAL: 60000, // ms (1 minute)
     MAX_UNDO_HISTORY: 10,
     CHART_DAYS: 7,
@@ -42,8 +42,8 @@ class WaterTracker {
         this.reminderInterval = null;
         this.reminderSettings = {
             enabled: false,
-            interval: CONFIG.DEFAULT_REMINDER_INTERVAL,
-            lastReminder: null,
+            scheduledTimes: [...CONFIG.DEFAULT_REMINDER_TIMES], // 3 times per day
+            lastReminders: {}, // Track last sent time for each scheduled time
             fcmToken: null,
             userGrantedPermission: false // Track if user granted permission
         };
@@ -753,7 +753,34 @@ class WaterTracker {
         this.log('DEBUG: Loading reminder settings from localStorage:', saved);
 
         if (saved) {
-            this.reminderSettings = JSON.parse(saved);
+            const parsed = JSON.parse(saved);
+            
+            // Migration: Check if using old interval-based format and convert to new time-based format
+            if (parsed.interval && !parsed.scheduledTimes) {
+                this.log('DEBUG: Migrating from interval-based to time-based reminders');
+                // Convert interval to approximate times (for backwards compatibility)
+                const intervalHours = Math.min(Math.max(Math.round(parsed.interval / 60), 3), 8);
+                parsed.scheduledTimes = ['09:00', '13:00', '18:00']; // Default 3 times
+                delete parsed.interval;
+            }
+            
+            // Migration: Convert lastReminder (single) to lastReminders (object)
+            if (parsed.lastReminder && !parsed.lastReminders) {
+                parsed.lastReminders = {};
+                delete parsed.lastReminder;
+            }
+            
+            // Ensure lastReminders exists
+            if (!parsed.lastReminders) {
+                parsed.lastReminders = {};
+            }
+            
+            // Ensure scheduledTimes exists
+            if (!parsed.scheduledTimes) {
+                parsed.scheduledTimes = [...CONFIG.DEFAULT_REMINDER_TIMES];
+            }
+            
+            this.reminderSettings = { ...this.reminderSettings, ...parsed };
             this.log('DEBUG: Loaded reminder settings:', this.reminderSettings);
 
             // Restore reminders if they were enabled before
@@ -778,6 +805,7 @@ class WaterTracker {
         this.log('DEBUG: Current browser permission:', Notification.permission);
         this.log('DEBUG: User previously granted permission:', this.reminderSettings.userGrantedPermission);
         this.log('DEBUG: FCM available:', !!this.messaging);
+        this.log('DEBUG: Scheduled times:', this.reminderSettings.scheduledTimes);
 
         // Check if running from file:// protocol
         const isFileProtocol = window.location.protocol === 'file:';
@@ -793,10 +821,6 @@ class WaterTracker {
             await this.initializeFCM();
         }
 
-        // KEY FIX: Always start the interval if reminders are enabled
-        // We don't require browser permission to start the interval
-        // Permission will be checked when actually sending notifications
-
         // Save enabled state
         this.reminderSettings.enabled = true;
         this.saveReminderSettings();
@@ -810,28 +834,34 @@ class WaterTracker {
         // Show retry button if user hasn't granted permission yet
         const reminderRetry = document.getElementById('reminderRetry');
         const reminderOptions = document.getElementById('reminderOptions');
+        const quickNotifyBtn = document.getElementById('quickNotifyBtn');
+
+        const timeDisplay = this.reminderSettings.scheduledTimes.join(', ');
 
         if (!this.reminderSettings.userGrantedPermission && Notification.permission !== 'granted') {
             this.log('DEBUG: Permission not granted, showing retry button');
             if (reminderRetry) reminderRetry.style.display = 'block';
             if (reminderOptions) reminderOptions.style.display = 'block';
+            if (quickNotifyBtn) quickNotifyBtn.style.display = 'none';
 
             // If this is a fresh enable (not auto-restore), request permission
             if (!isAutoRestore) {
                 const granted = await this.requestNotificationPermission();
                 if (granted) {
                     if (reminderRetry) reminderRetry.style.display = 'none';
-                    this.showToast('Reminders Enabled', `We'll notify you every ${this.reminderSettings.interval} minutes`, 'success');
+                    if (quickNotifyBtn) quickNotifyBtn.style.display = 'flex';
+                    this.showToast('Reminders Enabled', `We'll notify you at ${timeDisplay}`, 'success');
                 }
             }
         } else {
             this.log('DEBUG: Permission was previously granted');
             if (reminderRetry) reminderRetry.style.display = 'none';
             if (reminderOptions) reminderOptions.style.display = 'block';
+            if (quickNotifyBtn) quickNotifyBtn.style.display = 'flex';
 
             // Show success toast only on fresh enable
             if (!isAutoRestore) {
-                this.showToast('Reminders Enabled', `We'll notify you every ${this.reminderSettings.interval} minutes`, 'success');
+                this.showToast('Reminders Enabled', `We'll notify you at ${timeDisplay}`, 'success');
             }
         }
 
@@ -840,12 +870,42 @@ class WaterTracker {
             clearInterval(this.reminderInterval);
         }
 
+        // Check for overdue reminders when restoring (for each scheduled time)
+        if (isAutoRestore) {
+            this.checkOverdueReminders();
+        }
+
         // Set up reminder interval (check every minute)
         this.reminderInterval = setInterval(() => {
             this.checkAndSendReminder();
         }, CONFIG.REMINDER_CHECK_INTERVAL);
 
         this.log('DEBUG: Reminder interval started successfully');
+    }
+
+    // Check for overdue reminders on restore
+    checkOverdueReminders() {
+        const now = new Date();
+        const today = this.getToday();
+        let overdueCount = 0;
+
+        this.reminderSettings.scheduledTimes.forEach(time => {
+            const lastSent = this.reminderSettings.lastReminders[time];
+            const scheduledToday = new Date(`${today}T${time}:00`);
+            
+            // Check if this time has passed today and hasn't been sent today
+            if (now > scheduledToday) {
+                const lastSentDate = lastSent ? new Date(lastSent).toLocaleDateString('en-CA') : null;
+                if (lastSentDate !== today) {
+                    this.log('DEBUG: Overdue reminder found for time:', time);
+                    overdueCount++;
+                    // Send notification after a delay
+                    setTimeout(() => {
+                        this.sendScheduledReminder(time);
+                    }, 3000 * overdueCount); // Stagger multiple overdue notifications
+                }
+            }
+        });
     }
 
     // Stop Reminders
@@ -874,6 +934,16 @@ class WaterTracker {
             reminderRetry.style.display = 'none';
         }
 
+        const manualNotificationSection = document.getElementById('manualNotificationSection');
+        if (manualNotificationSection) {
+            manualNotificationSection.style.display = 'none';
+        }
+
+        const quickNotifyBtn = document.getElementById('quickNotifyBtn');
+        if (quickNotifyBtn) {
+            quickNotifyBtn.style.display = 'none';
+        }
+
         this.log('DEBUG: Reminders stopped');
         this.showToast('Reminders Disabled', 'You will no longer receive notifications', 'info');
     }
@@ -883,20 +953,43 @@ class WaterTracker {
         if (!this.reminderSettings.enabled) return;
 
         const now = new Date();
-        const lastReminder = this.reminderSettings.lastReminder ?
-            new Date(this.reminderSettings.lastReminder) : null;
+        const today = this.getToday();
+        const currentTime = now.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
 
-        // Check if it's time to send a reminder
-        if (lastReminder) {
-            const minutesSinceLastReminder = (now - lastReminder) / (1000 * 60);
-            if (minutesSinceLastReminder < this.reminderSettings.interval) {
-                return; // Not time yet
+        this.log('DEBUG: Checking reminders at', currentTime);
+
+        // Check each scheduled time
+        this.reminderSettings.scheduledTimes.forEach(scheduledTime => {
+            // Check if we're within 1 minute of the scheduled time
+            if (this.isTimeWithinWindow(currentTime, scheduledTime, 1)) {
+                const lastSent = this.reminderSettings.lastReminders[scheduledTime];
+                const lastSentDate = lastSent ? new Date(lastSent).toLocaleDateString('en-CA') : null;
+                
+                // Only send if not already sent today for this time
+                if (lastSentDate !== today) {
+                    this.log('DEBUG: Time to send reminder for', scheduledTime);
+                    this.sendScheduledReminder(scheduledTime);
+                } else {
+                    this.log('DEBUG: Already sent reminder for', scheduledTime, 'today');
+                }
             }
-        }
+        });
+    }
 
+    // Check if current time is within a window of scheduled time (in minutes)
+    isTimeWithinWindow(currentTime, scheduledTime, windowMinutes) {
+        const current = new Date(`2000-01-01T${currentTime}:00`);
+        const scheduled = new Date(`2000-01-01T${scheduledTime}:00`);
+        const diffMinutes = Math.abs((current.getTime() - scheduled.getTime()) / (1000 * 60));
+        return diffMinutes <= windowMinutes;
+    }
+
+    // Send a scheduled reminder
+    sendScheduledReminder(scheduledTime) {
         // Check if user has reached daily goal
         const percentage = (this.currentAmount / this.dailyGoal) * 100;
         if (percentage >= 100) {
+            this.log('DEBUG: Goal reached, skipping reminder for', scheduledTime);
             return; // Goal reached, no need to remind
         }
 
@@ -921,15 +1014,24 @@ class WaterTracker {
         const randomMessage = messages[Math.floor(Math.random() * messages.length)];
 
         const remaining = this.dailyGoal - this.currentAmount;
-        const body = `${randomMessage} You still need ${remaining}ml to reach your daily goal.`;
+        const timeLabel = this.formatTime12Hour(scheduledTime);
+        const body = `${randomMessage} (${timeLabel}) You still need ${remaining}ml to reach your daily goal.`;
 
         this.sendNotification('💧 HydroTracker Reminder', body, 'icon-192.png');
 
-        // Update last reminder time
-        this.reminderSettings.lastReminder = now.toISOString();
+        // Update last reminder time for this scheduled time
+        this.reminderSettings.lastReminders[scheduledTime] = new Date().toISOString();
         this.saveReminderSettings();
 
-        this.log('Reminder sent at:', now);
+        this.log('Reminder sent for scheduled time:', scheduledTime);
+    }
+
+    // Format time to 12-hour format
+    formatTime12Hour(time24) {
+        const [hours, minutes] = time24.split(':').map(Number);
+        const period = hours >= 12 ? 'PM' : 'AM';
+        const hours12 = hours % 12 || 12;
+        return `${hours12}:${minutes.toString().padStart(2, '0')} ${period}`;
     }
 
     // Test method - Generate a random reminder for testing
@@ -969,17 +1071,17 @@ class WaterTracker {
         this.log('Browser permission:', Notification.permission);
         this.log('User granted before:', this.reminderSettings.userGrantedPermission);
         this.log('Reminders enabled:', this.reminderSettings.enabled);
-        this.log('Reminder interval:', this.reminderSettings.interval);
+        this.log('Scheduled times:', this.reminderSettings.scheduledTimes?.join(', ') || 'not set');
+        this.log('Last reminders:', this.reminderSettings.lastReminders);
         this.log('Interval running:', !!this.reminderInterval);
         this.log('FCM available:', !!this.messaging);
         this.log('FCM Token:', this.reminderSettings.fcmToken ? this.reminderSettings.fcmToken.substring(0, 20) + '...' : 'none');
         this.log('LocalStorage:', localStorage.getItem(STORAGE_KEYS.REMINDERS));
         this.log('===============================');
-        this.log('To enable notifications:');
-        this.log('1. Click the lock/settings icon in browser address bar');
-        this.log('2. Find "Notifications" or "Permissions"');
-        this.log('3. Set to "Allow"');
-        this.log('4. Click "Retry Notifications" button in Settings');
+        this.log('Available commands:');
+        this.log('- waterTracker.sendManualNotification("Your message")');
+        this.log('- waterTracker.testRandomReminder()');
+        this.log('- waterTracker.diagnoseNotifications()');
         this.log('===============================');
         this.showToast('Diagnostic', 'Check console for details', 'info');
     }
@@ -992,15 +1094,44 @@ class WaterTracker {
         this.startReminders(false); // false = not auto-restore
     }
 
-    // Update Reminder Interval
-    updateReminderInterval(minutes) {
-        this.reminderSettings.interval = parseInt(minutes);
+    // Force check reminder immediately (for testing)
+    forceCheckReminder() {
+        this.log('DEBUG: Forcing reminder check...');
+        this.checkAndSendReminder();
+    }
+
+    // Update Scheduled Times
+    updateScheduledTimes(times) {
+        this.reminderSettings.scheduledTimes = times;
         this.saveReminderSettings();
 
         if (this.reminderSettings.enabled) {
-            // Restart with new interval
+            // Restart with new times
             this.startReminders(false);
+            this.showToast('Times Updated', `Reminders set for ${times.join(', ')}`, 'info');
         }
+    }
+
+    // Send manual notification
+    sendManualNotification(customMessage = null) {
+        const messages = [
+            'Time to hydrate! 💧',
+            'Your body needs water! 💧',
+            'Stay hydrated, stay healthy! 💧',
+            'Water break! 💧',
+            'Drink up for better health! 💧',
+            'Keep that water flowing! 💧'
+        ];
+        
+        const message = customMessage || messages[Math.floor(Math.random() * messages.length)];
+        const remaining = Math.max(0, this.dailyGoal - this.currentAmount);
+        const body = remaining > 0 
+            ? `${message} You still need ${remaining}ml to reach your daily goal.`
+            : `${message} You've reached your daily goal! Great job! 🎉`;
+
+        this.sendNotification('💧 Manual Reminder', body, 'icon-192.png');
+        this.log('Manual notification sent:', message);
+        this.showToast('Notification Sent', 'Check your notification!', 'success');
     }
 
     loadData() {
@@ -1631,8 +1762,12 @@ class WaterTracker {
         // Reminder toggle - WORKING VERSION
         const reminderToggle = document.getElementById('reminderToggle');
         const reminderOptions = document.getElementById('reminderOptions');
-        const reminderInterval = document.getElementById('reminderInterval');
+        const reminderTime1 = document.getElementById('reminderTime1');
+        const reminderTime2 = document.getElementById('reminderTime2');
+        const reminderTime3 = document.getElementById('reminderTime3');
         const reminderRetry = document.getElementById('reminderRetry');
+        const manualNotificationSection = document.getElementById('manualNotificationSection');
+        const quickNotifyBtn = document.getElementById('quickNotifyBtn');
 
         if (reminderToggle) {
             // Set initial state from saved settings
@@ -1640,9 +1775,21 @@ class WaterTracker {
             if (reminderOptions) {
                 reminderOptions.style.display = this.reminderSettings.enabled ? 'block' : 'none';
             }
-            if (reminderInterval) {
-                reminderInterval.value = this.reminderSettings.interval;
+            if (manualNotificationSection) {
+                manualNotificationSection.style.display = this.reminderSettings.enabled ? 'block' : 'none';
             }
+            
+            // Show quick notify button if enabled and permission granted
+            const hasPermission = this.reminderSettings.userGrantedPermission || Notification.permission === 'granted';
+            if (quickNotifyBtn) {
+                quickNotifyBtn.style.display = (this.reminderSettings.enabled && hasPermission) ? 'flex' : 'none';
+            }
+            
+            // Set time inputs from saved settings
+            const times = this.reminderSettings.scheduledTimes || CONFIG.DEFAULT_REMINDER_TIMES;
+            if (reminderTime1) reminderTime1.value = times[0] || '09:00';
+            if (reminderTime2) reminderTime2.value = times[1] || '13:00';
+            if (reminderTime3) reminderTime3.value = times[2] || '18:00';
 
             // Show retry button if enabled but no permission granted
             if (reminderRetry && this.reminderSettings.enabled &&
@@ -1658,6 +1805,9 @@ class WaterTracker {
                 if (reminderOptions) {
                     reminderOptions.style.display = isEnabled ? 'block' : 'none';
                 }
+                if (manualNotificationSection) {
+                    manualNotificationSection.style.display = isEnabled ? 'block' : 'none';
+                }
 
                 if (isEnabled) {
                     await this.startReminders(false); // Fresh enable - will request permission
@@ -1667,11 +1817,30 @@ class WaterTracker {
             });
         }
 
-        // Reminder interval change
-        if (reminderInterval) {
-            reminderInterval.addEventListener('change', () => {
-                this.updateReminderInterval(reminderInterval.value);
-                this.showToast('Interval Updated', `Reminders set to every ${reminderInterval.value} minutes`, 'info');
+        // Reminder times change
+        const updateTimes = () => {
+            const time1 = reminderTime1 ? reminderTime1.value : '09:00';
+            const time2 = reminderTime2 ? reminderTime2.value : '13:00';
+            const time3 = reminderTime3 ? reminderTime3.value : '18:00';
+            this.updateScheduledTimes([time1, time2, time3]);
+        };
+
+        if (reminderTime1) reminderTime1.addEventListener('change', updateTimes);
+        if (reminderTime2) reminderTime2.addEventListener('change', updateTimes);
+        if (reminderTime3) reminderTime3.addEventListener('change', updateTimes);
+
+        // Send manual notification button
+        const sendManualNotificationBtn = document.getElementById('sendManualNotificationBtn');
+        if (sendManualNotificationBtn) {
+            sendManualNotificationBtn.addEventListener('click', () => {
+                this.sendManualNotification();
+            });
+        }
+
+        // Quick notify button (header) - uses the same quickNotifyBtn declared earlier
+        if (quickNotifyBtn) {
+            quickNotifyBtn.addEventListener('click', () => {
+                this.sendManualNotification();
             });
         }
 
@@ -1815,6 +1984,9 @@ if (!CanvasRenderingContext2D.prototype.roundRect) {
 }
 
 // Initialize app
+let waterTracker;
 document.addEventListener('DOMContentLoaded', () => {
-    new WaterTracker();
+    waterTracker = new WaterTracker();
+    // Expose to global scope for debugging
+    window.waterTracker = waterTracker;
 });
