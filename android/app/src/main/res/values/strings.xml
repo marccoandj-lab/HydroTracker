@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">HydroTracker</string>
+    <string name="title_activity_main">HydroTracker</string>
+    <string name="package_name">com.hydrotracker.app</string>
+    <string name="custom_url_scheme">com.hydrotracker.app</string>
+</resources>

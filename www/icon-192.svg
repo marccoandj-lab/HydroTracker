@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="192" height="192" viewBox="0 0 192 192">
+  <defs>
+    <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#00f2ff;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#7b2fff;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#ff2d95;stop-opacity:1" />
+    </linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="4" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  
+  <!-- Background with gradient -->
+  <rect width="192" height="192" rx="40" fill="url(#bgGradient)"/>
+  
+  <!-- Water drop shape -->
+  <path d="M96 45c-18 22.5-36 45-36 67.5 0 19.8 16.2 36 36 36s36-16.2 36-36c0-22.5-18-45-36-67.5z" 
+        fill="white" 
+        opacity="0.95"
+        filter="url(#glow)"/>
+  
+  <!-- Highlight on drop -->
+  <ellipse cx="88" cy="85" rx="8" ry="12" fill="white" opacity="0.6"/>
+</svg>

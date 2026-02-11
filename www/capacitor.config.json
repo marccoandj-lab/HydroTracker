@@ -1,0 +1,6 @@
+{
+  "appId": "com.hydrotracker.app",
+  "appName": "HydroTracker",
+  "webDir": "www",
+  "bundledWebRuntime": false
+}
