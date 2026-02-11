@@ -678,7 +678,7 @@ class WaterTracker {
             // Get FCM token - requires VAPID key from Firebase Console
             // Go to: Firebase Console > Project Settings > Cloud Messaging > Web Push certificates
             // Generate or copy your VAPID public key
-            const vapidKey = 'BEl62iUYgUivxIkv69yViEuiBIa-Ib9-BGb8uJOik9GHMbeq8h2UW9XWBaSP-6tGAznDYwsA17bPJTUkcrroUIvG9f1d7A7dhUP1w2hTiCdB690DDRhsvLc';
+            const vapidKey = 'BGb8uJOik9GHMbeq8h2UW9XWBaSP-6tGAznDYwsA17bPJTUkcrroUIvG9f1d7A7dhUP1w2hTiCdB690DDRhsvLc';
 
             const token = await this.messaging.getToken({ vapidKey });
 
